@@ -45,7 +45,6 @@ export default function AuthGate({ children }) {
     const userId = session?.user.id
 
     if (!userId) {
-      setMember(null)
       return
     }
 
