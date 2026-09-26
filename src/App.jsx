@@ -586,9 +586,9 @@ export default function App() {
           {view === "calendar" && (
             <>
               <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: "1.25rem" }}>
-                <button onClick={prevMonth} style={{ background: "none", border: `0.5px solid ${C.borderSecondary}`, borderRadius: 8, padding: "6px 12px", cursor: "pointer", fontSize: 16 }}>‹</button>
+                <button onClick={prevMonth} style={{ background: "none", border: `0.5px solid ${C.borderSecondary}`, borderRadius: 8, padding: "6px 12px", cursor: "pointer", fontSize: 16, color: C.textSecondary }}>‹</button>
                 <div style={{ fontSize: 22, fontWeight: 500, minWidth: 220, textAlign: "center" }}>{MONTHS[month]} {year}</div>
-                <button onClick={nextMonth} style={{ background: "none", border: `0.5px solid ${C.borderSecondary}`, borderRadius: 8, padding: "6px 12px", cursor: "pointer", fontSize: 16 }}>›</button>
+                <button onClick={nextMonth} style={{ background: "none", border: `0.5px solid ${C.borderSecondary}`, borderRadius: 8, padding: "6px 12px", cursor: "pointer", fontSize: 16, color: C.textSecondary }}>›</button>
               </div>
               <div style={{ background: C.bgPrimary, borderRadius: 12, border: `0.5px solid ${C.borderTertiary}`, overflow: "hidden" }}>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", background: C.bgSecondary }}>

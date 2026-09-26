@@ -70,6 +70,10 @@ Preserve current working behavior while migrating the data model.
 
 Execute the manual checklist in `TEST_CASES.md`, prioritizing task
 add/edit/status/delete with a reload after each operation.
+
+Customer backend operations and handover are documented in
+`GUIA_ADMIN_SUPABASE.md` (Spanish). It covers member access, safe table review,
+RLS/API-key security, logs, backups, Free-plan pausing, and project transfer.
 Bodas event creation has already been verified in the user's SSH-forwarded
 browser. Corporativo creation (46 tasks) is not yet manually verified. Do not
 persist event editing until the due-date rule for manually adjusted tasks is
@@ -112,3 +116,8 @@ CRUD still requires the same manual refresh test in the SSH-forwarded browser.
 The legacy workbook has now been compared with the React source. Its `To Do`
 sheet contains operational status, comments, and owner overrides that the
 current seed-data implementation does not preserve.
+
+AuthGate no longer resets membership or unmounts the calendar on
+`TOKEN_REFRESHED` / same-user session recovery. Switching Chrome tabs should
+keep the calendar mounted. `npm run build` and `npm run lint` pass after this
+fix. Manual tab-switch verification in the user's Chrome is still required.
