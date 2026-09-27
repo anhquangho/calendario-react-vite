@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 
 export default function AuthGate({ children }) {
@@ -10,7 +10,12 @@ export default function AuthGate({ children }) {
   const [password, setPassword] = useState('')
   const [errorMessage, setErrorMessage] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const sessionRef = useRef(null)
+  const userId = session?.user?.id ?? null
 
+  useEffect(() => {
+    sessionRef.current = session
+  }, [session])
 
   useEffect(() => {
     let mounted = true
@@ -28,9 +33,16 @@ export default function AuthGate({ children }) {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      setMember(null)
-      setMembershipChecked(false)
+    } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      const currentUserId = sessionRef.current?.user?.id
+      const nextUserId = nextSession?.user?.id
+      const sameUser = Boolean(currentUserId) && currentUserId === nextUserId
+
+      if (event === 'SIGNED_OUT' || !sameUser) {
+        setMember(null)
+        setMembershipChecked(false)
+      }
+
       setSession(nextSession)
       setLoading(false)
     })
@@ -42,17 +54,13 @@ export default function AuthGate({ children }) {
   }, [])
 
   useEffect(() => {
-    const userId = session?.user.id
-
     if (!userId) {
-      setMember(null)
       return
     }
 
     let cancelled = false
 
     async function checkMembership() {
-      setMembershipChecked(false)
       setErrorMessage('')
 
       const { data, error } = await supabase
@@ -79,7 +87,7 @@ export default function AuthGate({ children }) {
     return () => {
       cancelled = true
     }
-  }, [session])
+  }, [userId])
 
   async function handleSubmit(event) {
     event.preventDefault()
@@ -98,7 +106,7 @@ export default function AuthGate({ children }) {
     setSubmitting(false)
   }
 
-  if (loading || (session && !membershipChecked)) {
+  if (loading || (session && !membershipChecked && !member)) {
     return <p>Checking access...</p>
   }
 

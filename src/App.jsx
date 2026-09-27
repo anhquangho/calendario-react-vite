@@ -1,4 +1,16 @@
-import { useState, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  createEventWithTasks,
+  deleteEvent as deleteEventRecord,
+  getEvents,
+} from "./services/events";
+import { getTaskTemplates } from "./services/taskTemplates";
+import {
+  createTask as createTaskRecord,
+  deleteTask as deleteTaskRecord,
+  getTasks,
+  updateTask as updateTaskRecord,
+} from "./services/tasks";
 
 // ─── Date helpers ────────────────────────────────────────────────────────────
 const EXCEL_EPOCH = new Date(1899, 11, 30);
@@ -14,7 +26,11 @@ function formatDate(date) {
   return date.toLocaleDateString("es-HN", { day: "2-digit", month: "short", year: "numeric" });
 }
 function toInputDate(serial) {
-  return excelToDate(serial).toISOString().split("T")[0];
+  const date = excelToDate(serial);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 function fromInputDate(str) {
   return dateToExcel(new Date(str + "T12:00:00"));
@@ -77,19 +93,6 @@ const BODAS_TEMPLATE = [
   { daysBefore: -5,  task: "Cierre Evento",                owner: "Jeroen"   },
 ];
 
-function generateTasksForEvent(eventName, eventDateSerial) {
-  return BODAS_TEMPLATE.map((tmpl, i) => ({
-    id: `${eventName}-${i}-${Date.now()}`,
-    date: eventDateSerial - tmpl.daysBefore,
-    task: `${tmpl.task} - ${eventName}`,
-    owner: tmpl.owner,
-    event: eventName,
-    status: "Not started",
-    comments: "",
-    generated: true,
-  }));
-}
-
 // ─── Design tokens ────────────────────────────────────────────────────────────
 const C = {
   bgPrimary:    "#ffffff",
@@ -119,33 +122,43 @@ const STATUS_COLORS = {
 const DAYS   = ["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"];
 const MONTHS = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
 
-// ─── Seed events ─────────────────────────────────────────────────────────────
-const SEED_EVENTS = [
-  { name: "Cabas Rodriguez",   date: new Date(2026, 6, 18), type: "Bodas" },
-  { name: "Zelaya Irias",      date: new Date(2026, 6, 25), type: "Bodas" },
-  { name: "Pinel Zambrano",    date: new Date(2026, 7,  1), type: "Bodas" },
-  { name: "Kafie Facusse",     date: new Date(2026, 8,  5), type: "Bodas" },
-  { name: "Tigo 30 años",      date: new Date(2026, 7, 22), type: "Corporativo" },
-];
+function mapEventRow(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    date: fromInputDate(row.event_date),
+    type: row.event_type,
+  };
+}
 
-function buildSeedTasks() {
-  let tasks = [];
-  let uid = 0;
-  SEED_EVENTS.filter(e => e.type === "Bodas").forEach(ev => {
-    const serial = dateToExcel(ev.date);
-    BODAS_TEMPLATE.forEach(tmpl => {
-      tasks.push({
-        id: uid++,
-        date: serial - tmpl.daysBefore,
-        task: `${tmpl.task} - ${ev.name}`,
-        owner: tmpl.owner,
-        event: ev.name,
-        status: "Not started",
-        comments: "",
-      });
-    });
-  });
-  return tasks;
+function mapTaskRow(row) {
+  const eventName = row.event?.name || "";
+
+  return {
+    id: row.id,
+    eventId: row.event_id,
+    templateId: row.template_id,
+    date: fromInputDate(row.due_date),
+    task: eventName ? `${row.title} - ${eventName}` : row.title,
+    title: row.title,
+    owner: row.owner,
+    event: eventName,
+    status: row.status,
+    comments: row.comments,
+    generated: row.is_generated,
+  };
+}
+
+async function fetchCalendarData() {
+  const [eventRows, taskRows] = await Promise.all([
+    getEvents(),
+    getTasks(),
+  ]);
+
+  return {
+    events: eventRows.map(mapEventRow),
+    tasks: taskRows.map(mapTaskRow),
+  };
 }
 
 // ─── Shared UI helpers ────────────────────────────────────────────────────────
@@ -207,12 +220,93 @@ export default function App() {
   const [view,  setView]  = useState("calendar"); // calendar | list | events
 
   // Events catalogue
-  const [events, setEvents] = useState(SEED_EVENTS.map((e, i) => ({
-    id: i, name: e.name, date: dateToExcel(e.date), type: e.type,
-  })));
+  const [events, setEvents] = useState([]);
 
   // Tasks
-  const [tasks, setTasks] = useState(() => buildSeedTasks());
+  const [tasks, setTasks] = useState([]);
+  const [dataLoading, setDataLoading] = useState(true);
+  const [dataError, setDataError] = useState("");
+  const [eventSaving, setEventSaving] = useState(false);
+  const [taskSaving, setTaskSaving] = useState(false);
+  const [taskError, setTaskError] = useState("");
+
+  // Templates are loaded from Supabase after the first render. Keep the
+  // existing wedding template as a temporary fallback while loading.
+  const [templates, setTemplates] = useState({
+    Bodas: BODAS_TEMPLATE,
+    Corporativo: [],
+  });
+  const [templateError, setTemplateError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+
+    getTaskTemplates()
+      .then(rows => {
+        if (cancelled) return;
+
+        const grouped = rows.reduce((result, row) => {
+          const type = row.event_type;
+          if (!result[type]) result[type] = [];
+          result[type].push({
+            daysBefore: row.days_before,
+            task: row.title,
+            owner: row.default_owner,
+          });
+          return result;
+        }, {});
+
+        setTemplates({
+          Bodas: grouped.Bodas?.length ? grouped.Bodas : BODAS_TEMPLATE,
+          Corporativo: grouped.Corporativo || [],
+        });
+        setTemplateError("");
+      })
+      .catch(error => {
+        if (cancelled) return;
+        setTemplateError(error.message || "Unable to load task templates");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const loadCalendarData = useCallback(async () => {
+    try {
+      const nextData = await fetchCalendarData();
+      setEvents(nextData.events);
+      setTasks(nextData.tasks);
+      setDataError("");
+    } catch (error) {
+      setDataError(error.message || "Unable to load calendar data");
+    } finally {
+      setDataLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    fetchCalendarData()
+      .then(nextData => {
+        if (cancelled) return;
+        setEvents(nextData.events);
+        setTasks(nextData.tasks);
+      })
+      .catch(error => {
+        if (cancelled) return;
+        setDataError(error.message || "Unable to load calendar data");
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setDataLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Filters
   const [filterOwner,  setFilterOwner]  = useState("All");
@@ -246,9 +340,11 @@ export default function App() {
   }, [filteredTasks]);
 
   const calendarDays = useMemo(() => {
-    const pad  = firstDay.getDay();
+    const firstDayOfMonth = new Date(year, month, 1);
+    const lastDayOfMonth = new Date(year, month + 1, 0);
+    const pad  = firstDayOfMonth.getDay();
     const days = Array(pad).fill(null);
-    for (let d = 1; d <= lastDay.getDate(); d++) {
+    for (let d = 1; d <= lastDayOfMonth.getDate(); d++) {
       const date = new Date(year, month, d);
       days.push({ date, serial: dateToExcel(date), day: d });
     }
@@ -270,28 +366,97 @@ export default function App() {
   };
 
   // ── Task mutations ──
-  const updateStatus  = (id, status) => setTasks(p => p.map(t => t.id === id ? {...t, status} : t));
-  const saveTask      = (id, upd)    => { setTasks(p => p.map(t => t.id === id ? {...t, ...upd} : t)); setEditingTask(null); };
-  const deleteTask    = id           => { setTasks(p => p.filter(t => t.id !== id)); setEditingTask(null); };
-  const addTask       = form         => { setTasks(p => [...p, {...form, id: Date.now()}]); setAddTaskForm(null); };
+  const updateStatus = async (id, status) => {
+    setTaskSaving(true);
+    setDataError("");
+
+    try {
+      await updateTaskRecord(id, { status });
+      await loadCalendarData();
+    } catch (error) {
+      setDataError(error.message || "Unable to update task status");
+    } finally {
+      setTaskSaving(false);
+    }
+  };
+
+  const saveTask = async (id, form) => {
+    setTaskSaving(true);
+    setTaskError("");
+
+    try {
+      await updateTaskRecord(id, {
+        eventId: form.eventId,
+        title: form.title.trim(),
+        owner: form.owner,
+        dueDate: toInputDate(form.date),
+        status: form.status,
+        comments: form.comments,
+      });
+      await loadCalendarData();
+      setEditingTask(null);
+    } catch (error) {
+      setTaskError(error.message || "Unable to update task");
+    } finally {
+      setTaskSaving(false);
+    }
+  };
+
+  const deleteTask = async id => {
+    setTaskSaving(true);
+    setTaskError("");
+
+    try {
+      await deleteTaskRecord(id);
+      await loadCalendarData();
+      setEditingTask(null);
+    } catch (error) {
+      setTaskError(error.message || "Unable to delete task");
+    } finally {
+      setTaskSaving(false);
+    }
+  };
+
+  const addTask = async form => {
+    setTaskSaving(true);
+    setTaskError("");
+
+    try {
+      await createTaskRecord({
+        eventId: form.eventId,
+        title: form.title.trim(),
+        owner: form.owner,
+        dueDate: toInputDate(form.date),
+        status: form.status,
+        comments: form.comments,
+      });
+      await loadCalendarData();
+      setAddTaskForm(null);
+    } catch (error) {
+      setTaskError(error.message || "Unable to create task");
+    } finally {
+      setTaskSaving(false);
+    }
+  };
 
   // ── Event mutations ──
-  const addEvent = (name, dateSerial, type) => {
-    const id = Date.now();
-    setEvents(p => [...p, { id, name, date: dateSerial, type }]);
-    if (type === "Bodas") {
-      const newTasks = BODAS_TEMPLATE.map((tmpl, i) => ({
-        id: `${id}-${i}`,
-        date:  dateSerial - tmpl.daysBefore,
-        task:  `${tmpl.task} - ${name}`,
-        owner: tmpl.owner,
-        event: name,
-        status: "Not started",
-        comments: "",
-      }));
-      setTasks(p => [...p, ...newTasks]);
+  const addEvent = async (name, dateSerial, type) => {
+    setEventSaving(true);
+    setDataError("");
+
+    try {
+      await createEventWithTasks({
+        name,
+        eventDate: toInputDate(dateSerial),
+        eventType: type,
+      });
+      await loadCalendarData();
+      setEventModal(null);
+    } catch (error) {
+      setDataError(error.message || "Unable to create event");
+    } finally {
+      setEventSaving(false);
     }
-    setEventModal(null);
   };
 
   const editEvent = (oldEvent, newName, newDateSerial, newType) => {
@@ -303,24 +468,40 @@ export default function App() {
       // Re-derive task name: strip old event name suffix, append new name
       const baseName = t.task.replace(` - ${oldEvent.name}`, "");
       // Re-derive date offset: find matching template entry by base task name
-      const tmpl = BODAS_TEMPLATE.find(tm => tm.task === baseName);
+      const tmpl = templates.Bodas.find(tm => tm.task === baseName);
       const newDate = tmpl ? newDateSerial - tmpl.daysBefore : t.date + (newDateSerial - oldEvent.date);
       return { ...t, event: newName, task: `${baseName} - ${newName}`, date: newDate };
     }));
     setEventModal(null);
   };
 
-  const deleteEvent = ev => {
-    setEvents(p => p.filter(e => e.id !== ev.id));
-    setTasks(p => p.filter(t => t.event !== ev.name));
-    setDeleteEventConfirm(null);
+  const deleteEvent = async ev => {
+    setEventSaving(true);
+    setDataError("");
+
+    try {
+      await deleteEventRecord(ev.id);
+      await loadCalendarData();
+      setDeleteEventConfirm(null);
+    } catch (error) {
+      setDataError(error.message || "Unable to delete event");
+    } finally {
+      setEventSaving(false);
+    }
   };
 
   // ── Nav ──
   const prevMonth = () => month === 0 ? (setMonth(11), setYear(y => y-1)) : setMonth(m => m-1);
   const nextMonth = () => month === 11 ? (setMonth(0), setYear(y => y+1)) : setMonth(m => m+1);
 
-  const allEventNames = events.map(e => e.name);
+  const newTaskForm = date => ({
+    date,
+    title: "",
+    owner: "Denisse",
+    eventId: events[0]?.id || "",
+    status: "Not started",
+    comments: "",
+  });
 
   // ── Render ──
   return (
@@ -343,10 +524,28 @@ export default function App() {
                 fontSize: 13, color: view===v ? C.textPrimary : C.textSecondary, fontWeight: view===v ? 500 : 400,
               }}>{l}</button>
             ))}
-            <Btn onClick={() => setAddTaskForm({ date: dateToExcel(today), task: "", owner: "Denisse", event: allEventNames[0]||"", status: "Not started", comments: "" })}>+ Nueva tarea</Btn>
+            <Btn disabled={!events.length} onClick={() => { setTaskError(""); setAddTaskForm(newTaskForm(dateToExcel(today))); }}>+ Nueva tarea</Btn>
             <Btn color="#378ADD" onClick={() => setEventModal({ mode: "add" })}>+ Nuevo evento</Btn>
           </div>
         </div>
+
+        {templateError && (
+          <div style={{ maxWidth: 1200, margin: "12px auto 0", padding: "0 1rem", color: C.danger, fontSize: 12 }}>
+            No se pudieron cargar los templates de Supabase. Se usa el fallback local temporalmente.
+          </div>
+        )}
+
+        {dataLoading && (
+          <div style={{ maxWidth: 1200, margin: "12px auto 0", padding: "0 1rem", color: C.textSecondary, fontSize: 12 }}>
+            Cargando eventos y tareas desde Supabase...
+          </div>
+        )}
+
+        {dataError && (
+          <div style={{ maxWidth: 1200, margin: "12px auto 0", padding: "0 1rem", color: C.danger, fontSize: 12 }}>
+            {dataError}
+          </div>
+        )}
 
         <div style={{ maxWidth: 1200, margin: "0 auto", padding: "1.5rem 1rem" }}>
 
@@ -387,9 +586,9 @@ export default function App() {
           {view === "calendar" && (
             <>
               <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: "1.25rem" }}>
-                <button onClick={prevMonth} style={{ background: "none", border: `0.5px solid ${C.borderSecondary}`, borderRadius: 8, padding: "6px 12px", cursor: "pointer", fontSize: 16 }}>‹</button>
+                <button onClick={prevMonth} style={{ background: "none", border: `0.5px solid ${C.borderSecondary}`, borderRadius: 8, padding: "6px 12px", cursor: "pointer", fontSize: 16, color: C.textSecondary }}>‹</button>
                 <div style={{ fontSize: 22, fontWeight: 500, minWidth: 220, textAlign: "center" }}>{MONTHS[month]} {year}</div>
-                <button onClick={nextMonth} style={{ background: "none", border: `0.5px solid ${C.borderSecondary}`, borderRadius: 8, padding: "6px 12px", cursor: "pointer", fontSize: 16 }}>›</button>
+                <button onClick={nextMonth} style={{ background: "none", border: `0.5px solid ${C.borderSecondary}`, borderRadius: 8, padding: "6px 12px", cursor: "pointer", fontSize: 16, color: C.textSecondary }}>›</button>
               </div>
               <div style={{ background: C.bgPrimary, borderRadius: 12, border: `0.5px solid ${C.borderTertiary}`, overflow: "hidden" }}>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", background: C.bgSecondary }}>
@@ -438,7 +637,7 @@ export default function App() {
                 </thead>
                 <tbody>
                   {filteredTasks.sort((a,b) => a.date - b.date).map(t => (
-                    <tr key={t.id} onClick={() => setEditingTask({...t})} style={{ cursor: "pointer" }}>
+                    <tr key={t.id} onClick={() => { setTaskError(""); setEditingTask({...t}); }} style={{ cursor: "pointer" }}>
                       <td style={{ fontSize: 13, padding: "8px 10px", borderBottom: `0.5px solid ${C.borderTertiary}` }}>{formatDate(excelToDate(t.date))}</td>
                       <td style={{ fontSize: 13, padding: "8px 10px", borderBottom: `0.5px solid ${C.borderTertiary}` }}>{t.task}</td>
                       <td style={{ fontSize: 13, padding: "8px 10px", borderBottom: `0.5px solid ${C.borderTertiary}` }}>{t.event}</td>
@@ -503,7 +702,7 @@ export default function App() {
               <p style={{ color: C.textSecondary, fontSize: 13 }}>No hay tareas para este día.</p>
             )}
             {(tasksByDay[selectedDay.serial]||[]).map(t => (
-              <div key={t.id} onClick={() => setEditingTask({...t})}
+              <div key={t.id} onClick={() => { setTaskError(""); setEditingTask({...t}); }}
                 style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "8px 0", borderBottom: `0.5px solid ${C.borderTertiary}`, cursor: "pointer" }}>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 13, fontWeight: 500 }}>{t.task}</div>
@@ -511,14 +710,14 @@ export default function App() {
                   {t.comments && <div style={{ fontSize: 11, color: C.textTertiary, marginTop: 2 }}>{t.comments}</div>}
                 </div>
                 <Badge label={t.owner} color={OWNER_COLORS[t.owner]||"#888"} />
-                <select value={t.status} onClick={e => e.stopPropagation()} onChange={e => { e.stopPropagation(); updateStatus(t.id, e.target.value); }}
+                <select value={t.status} disabled={taskSaving} onClick={e => e.stopPropagation()} onChange={e => { e.stopPropagation(); updateStatus(t.id, e.target.value); }}
                   style={{ ...inputStyle, width: "auto", padding: "4px 8px", fontSize: 12 }}>
                   <option>Not started</option><option>In progress</option><option>Completed</option>
                 </select>
               </div>
             ))}
             <div style={{ marginTop: 12 }}>
-              <Btn small onClick={() => { setSelectedDay(null); setAddTaskForm({ date: selectedDay.serial, task: "", owner: "Denisse", event: allEventNames[0]||"", status: "Not started", comments: "" }); }}>+ Agregar tarea aquí</Btn>
+              <Btn small disabled={!events.length} onClick={() => { setSelectedDay(null); setTaskError(""); setAddTaskForm(newTaskForm(selectedDay.serial)); }}>+ Agregar tarea aquí</Btn>
             </div>
           </Modal>
         )}
@@ -526,14 +725,14 @@ export default function App() {
         {/* ── Edit task modal ── */}
         {editingTask && (
           <Modal onClose={() => setEditingTask(null)}>
-            <EditTaskModal task={editingTask} events={allEventNames} onSave={saveTask} onDelete={deleteTask} onClose={() => setEditingTask(null)} />
+            <EditTaskModal task={editingTask} events={events} onSave={saveTask} onDelete={deleteTask} onClose={() => setEditingTask(null)} saving={taskSaving} error={taskError} />
           </Modal>
         )}
 
         {/* ── Add task modal ── */}
         {addTaskForm && (
           <Modal onClose={() => setAddTaskForm(null)}>
-            <AddTaskModal form={addTaskForm} onChange={setAddTaskForm} events={allEventNames} onAdd={addTask} onClose={() => setAddTaskForm(null)} />
+            <AddTaskModal form={addTaskForm} onChange={setAddTaskForm} events={events} onAdd={addTask} onClose={() => setAddTaskForm(null)} saving={taskSaving} error={taskError} />
           </Modal>
         )}
 
@@ -543,10 +742,11 @@ export default function App() {
             <EventModal
               mode={eventModal.mode}
               existing={eventModal.event}
-              template={BODAS_TEMPLATE}
+              templates={templates}
               onAdd={addEvent}
               onEdit={editEvent}
               onClose={() => setEventModal(null)}
+              saving={eventSaving}
             />
           </Modal>
         )}
@@ -560,7 +760,9 @@ export default function App() {
             </p>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
               <OutlineBtn onClick={() => setDeleteEventConfirm(null)}>Cancelar</OutlineBtn>
-              <Btn color={C.danger} onClick={() => deleteEvent(deleteEventConfirm)}>Sí, eliminar</Btn>
+              <Btn color={C.danger} disabled={eventSaving} onClick={() => deleteEvent(deleteEventConfirm)}>
+                {eventSaving ? "Eliminando..." : "Sí, eliminar"}
+              </Btn>
             </div>
           </Modal>
         )}
@@ -571,7 +773,7 @@ export default function App() {
 }
 
 // ─── Edit Task Modal ──────────────────────────────────────────────────────────
-function EditTaskModal({ task, events, onSave, onDelete, onClose }) {
+function EditTaskModal({ task, events, onSave, onDelete, onClose, saving, error }) {
   const [form, setForm] = useState({...task});
   return (
     <>
@@ -579,10 +781,10 @@ function EditTaskModal({ task, events, onSave, onDelete, onClose }) {
         <div style={{ fontSize: 16, fontWeight: 500 }}>Editar tarea</div>
         <CloseBtn onClick={onClose} />
       </div>
-      <FieldRow label="Tarea"><input style={inputStyle} value={form.task} onChange={e => setForm(p=>({...p,task:e.target.value}))} /></FieldRow>
+      <FieldRow label="Tarea"><input style={inputStyle} value={form.title} onChange={e => setForm(p=>({...p,title:e.target.value}))} /></FieldRow>
       <FieldRow label="Evento">
-        <select style={inputStyle} value={form.event} onChange={e => setForm(p=>({...p,event:e.target.value}))}>
-          {events.map(ev => <option key={ev} value={ev}>{ev}</option>)}
+        <select style={inputStyle} value={form.eventId} onChange={e => setForm(p=>({...p,eventId:e.target.value}))}>
+          {events.map(ev => <option key={ev.id} value={ev.id}>{ev.name}</option>)}
         </select>
       </FieldRow>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
@@ -601,11 +803,12 @@ function EditTaskModal({ task, events, onSave, onDelete, onClose }) {
         <input style={inputStyle} type="date" value={toInputDate(form.date)} onChange={e => setForm(p=>({...p,date:fromInputDate(e.target.value)}))} />
       </FieldRow>
       <FieldRow label="Comentarios"><input style={inputStyle} value={form.comments} onChange={e => setForm(p=>({...p,comments:e.target.value}))} /></FieldRow>
+      {error && <div style={{ color: C.danger, fontSize: 12, marginTop: 8 }}>{error}</div>}
       <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginTop: "1rem" }}>
-        <Btn color={C.danger} onClick={() => onDelete(task.id)}>Eliminar</Btn>
+        <Btn color={C.danger} disabled={saving} onClick={() => onDelete(task.id)}>{saving ? "Procesando..." : "Eliminar"}</Btn>
         <div style={{ display: "flex", gap: 8 }}>
           <OutlineBtn onClick={onClose}>Cancelar</OutlineBtn>
-          <Btn onClick={() => onSave(task.id, form)}>Guardar</Btn>
+          <Btn disabled={saving || !form.title.trim() || !form.eventId} onClick={() => onSave(task.id, form)}>{saving ? "Guardando..." : "Guardar"}</Btn>
         </div>
       </div>
     </>
@@ -613,17 +816,17 @@ function EditTaskModal({ task, events, onSave, onDelete, onClose }) {
 }
 
 // ─── Add Task Modal ───────────────────────────────────────────────────────────
-function AddTaskModal({ form, onChange, events, onAdd, onClose }) {
+function AddTaskModal({ form, onChange, events, onAdd, onClose, saving, error }) {
   return (
     <>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
         <div style={{ fontSize: 16, fontWeight: 500 }}>Nueva tarea</div>
         <CloseBtn onClick={onClose} />
       </div>
-      <FieldRow label="Tarea"><input style={inputStyle} value={form.task} onChange={e => onChange(p=>({...p,task:e.target.value}))} placeholder="Nombre de la tarea" /></FieldRow>
+      <FieldRow label="Tarea"><input style={inputStyle} value={form.title} onChange={e => onChange(p=>({...p,title:e.target.value}))} placeholder="Nombre de la tarea" /></FieldRow>
       <FieldRow label="Evento">
-        <select style={inputStyle} value={form.event} onChange={e => onChange(p=>({...p,event:e.target.value}))}>
-          {events.map(ev=><option key={ev} value={ev}>{ev}</option>)}
+        <select style={inputStyle} value={form.eventId} onChange={e => onChange(p=>({...p,eventId:e.target.value}))}>
+          {events.map(ev=><option key={ev.id} value={ev.id}>{ev.name}</option>)}
         </select>
       </FieldRow>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
@@ -642,23 +845,25 @@ function AddTaskModal({ form, onChange, events, onAdd, onClose }) {
         <input style={inputStyle} type="date" value={toInputDate(form.date)} onChange={e => onChange(p=>({...p,date:fromInputDate(e.target.value)}))} />
       </FieldRow>
       <FieldRow label="Comentarios"><input style={inputStyle} value={form.comments} onChange={e => onChange(p=>({...p,comments:e.target.value}))} placeholder="Opcional" /></FieldRow>
+      {error && <div style={{ color: C.danger, fontSize: 12, marginTop: 8 }}>{error}</div>}
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: "1rem" }}>
         <OutlineBtn onClick={onClose}>Cancelar</OutlineBtn>
-        <Btn onClick={() => onAdd(form)} disabled={!form.task}>Agregar</Btn>
+        <Btn onClick={() => onAdd(form)} disabled={saving || !form.title.trim() || !form.eventId}>{saving ? "Agregando..." : "Agregar"}</Btn>
       </div>
     </>
   );
 }
 
 // ─── Add/Edit Event Modal ─────────────────────────────────────────────────────
-function EventModal({ mode, existing, template, onAdd, onEdit, onClose }) {
+function EventModal({ mode, existing, templates, onAdd, onEdit, onClose, saving }) {
   const [name, setName]   = useState(existing?.name || "");
   const [dateStr, setDateStr] = useState(existing ? toInputDate(existing.date) : "");
   const [type, setType]   = useState(existing?.type || "Bodas");
   const [preview, setPreview] = useState(false);
 
   const dateSerial = dateStr ? fromInputDate(dateStr) : null;
-  const previewTasks = (type === "Bodas" && name && dateSerial)
+  const template = templates[type] || [];
+  const previewTasks = (name && dateSerial)
     ? template.map(tmpl => ({
         date: excelToDate(dateSerial - tmpl.daysBefore),
         task: `${tmpl.task} - ${name}`,
@@ -700,7 +905,7 @@ function EventModal({ mode, existing, template, onAdd, onEdit, onClose }) {
         <input style={inputStyle} type="date" value={dateStr} onChange={e => setDateStr(e.target.value)} />
       </FieldRow>
 
-      {type === "Bodas" && name && dateSerial && (
+      {name && dateSerial && (
         <div style={{ marginBottom: 12 }}>
           <button onClick={() => setPreview(p => !p)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 13, color: C.accent, padding: 0, textDecoration: "underline" }}>
             {preview ? "▲ Ocultar" : "▼ Ver"} las {template.length} tareas que se generarán
@@ -730,16 +935,10 @@ function EventModal({ mode, existing, template, onAdd, onEdit, onClose }) {
         </div>
       )}
 
-      {type === "Corporativo" && (
-        <div style={{ background: C.bgSecondary, borderRadius: 8, padding: "8px 12px", marginBottom: 12, fontSize: 12, color: C.textSecondary }}>
-          Los eventos corporativos no generan tareas automáticamente. Podrás agregar tareas manualmente desde el calendario.
-        </div>
-      )}
-
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: "1rem" }}>
         <OutlineBtn onClick={onClose}>Cancelar</OutlineBtn>
-        <Btn onClick={handleSubmit} disabled={!name || !dateSerial}>
-          {mode === "add" ? (type === "Bodas" ? `Crear y generar ${template.length} tareas` : "Crear evento") : "Guardar cambios"}
+        <Btn onClick={handleSubmit} disabled={!name || !dateSerial || saving}>
+          {saving ? "Guardando..." : mode === "add" ? `Crear y generar ${template.length} tareas` : "Guardar cambios"}
         </Btn>
       </div>
     </>

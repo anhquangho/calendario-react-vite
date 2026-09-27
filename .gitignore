@@ -8,9 +8,29 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
+.pnp
+.pnp.js
+.pnpm-store
 dist
 dist-ssr
 *.local
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Local notes, lockfile, and source spreadsheet
+package-lock.json
+CALENDARIO-PROJECT-CONTEXT.md
+Upwork_chat.html
+TIEN_DO_DIEU_TRA.md
+supabase/README.md
+TaskandSchedule/DK_Events_CHaiLD_Layout.xlsx
+
+# Local tooling
+.serena/
+supabase/.temp/
 
 # Editor directories and files
 .vscode/*
