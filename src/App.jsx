@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import TaskReminders, { TaskReminderBadge } from "./components/TaskReminders";
 import {
   createEventWithTasks,
   deleteEvent as deleteEventRecord,
@@ -215,6 +216,19 @@ function Badge({ label, color }) {
 // ─── Main App ─────────────────────────────────────────────────────────────────
 export default function App() {
   const today = new Date();
+  const [todaySerial, setTodaySerial] = useState(() => dateToExcel(new Date(new Date().setHours(0, 0, 0, 0))));
+  useEffect(() => {
+    const updateToday = () => setTodaySerial(dateToExcel(new Date(new Date().setHours(0, 0, 0, 0))));
+    // Refresh after midnight or when returning to a suspended browser tab.
+    const timer = window.setInterval(updateToday, 30000);
+    window.addEventListener("focus", updateToday);
+    document.addEventListener("visibilitychange", updateToday);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", updateToday);
+      document.removeEventListener("visibilitychange", updateToday);
+    };
+  }, []);
   const [year,  setYear]  = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth());
   const [view,  setView]  = useState("calendar"); // calendar | list | events
@@ -582,6 +596,12 @@ export default function App() {
             ))}
           </div>
 
+          {!dataLoading && !dataError && (
+            <TaskReminders tasks={filteredTasks} todaySerial={todaySerial}
+              formatTaskDate={serial => formatDate(excelToDate(serial))}
+              onOpenTask={task => { setTaskError(""); setEditingTask({ ...task }); }} />
+          )}
+
           {/* ── CALENDAR VIEW ── */}
           {view === "calendar" && (
             <>
@@ -615,7 +635,10 @@ export default function App() {
                           <span key={ev.id} style={{ fontSize: 10, borderRadius: 4, padding: "2px 5px", marginBottom: 2, display: "block", background: "#378ADD22", color: "#378ADD", fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>🎉 {ev.name}</span>
                         ))}
                         {shown.map(t => (
-                          <span key={t.id} style={{ fontSize: 10, borderRadius: 4, padding: "2px 5px", marginBottom: 2, display: "block", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", background: OWNER_COLORS[t.owner]+"22", color: OWNER_COLORS[t.owner] }}>{t.task}</span>
+                          <div key={t.id}>
+                            <span style={{ fontSize: 10, borderRadius: 4, padding: "2px 5px", marginBottom: 2, display: "block", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", background: OWNER_COLORS[t.owner]+"22", color: OWNER_COLORS[t.owner] }}>{t.task}</span>
+                            <TaskReminderBadge task={t} todaySerial={todaySerial} />
+                          </div>
                         ))}
                         {more > 0 && <div style={{ fontSize: 10, color: C.textTertiary, marginTop: 2 }}>+{more} más</div>}
                       </div>
@@ -638,7 +661,7 @@ export default function App() {
                 <tbody>
                   {filteredTasks.sort((a,b) => a.date - b.date).map(t => (
                     <tr key={t.id} onClick={() => { setTaskError(""); setEditingTask({...t}); }} style={{ cursor: "pointer" }}>
-                      <td style={{ fontSize: 13, padding: "8px 10px", borderBottom: `0.5px solid ${C.borderTertiary}` }}>{formatDate(excelToDate(t.date))}</td>
+                      <td style={{ fontSize: 13, padding: "8px 10px", borderBottom: `0.5px solid ${C.borderTertiary}` }}>{formatDate(excelToDate(t.date))}<br /><TaskReminderBadge task={t} todaySerial={todaySerial} /></td>
                       <td style={{ fontSize: 13, padding: "8px 10px", borderBottom: `0.5px solid ${C.borderTertiary}` }}>{t.task}</td>
                       <td style={{ fontSize: 13, padding: "8px 10px", borderBottom: `0.5px solid ${C.borderTertiary}` }}>{t.event}</td>
                       <td style={{ padding: "8px 10px", borderBottom: `0.5px solid ${C.borderTertiary}` }}><Badge label={t.owner} color={OWNER_COLORS[t.owner]||"#888"} /></td>
@@ -706,6 +729,7 @@ export default function App() {
                 style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "8px 0", borderBottom: `0.5px solid ${C.borderTertiary}`, cursor: "pointer" }}>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 13, fontWeight: 500 }}>{t.task}</div>
+                  <TaskReminderBadge task={t} todaySerial={todaySerial} />
                   <div style={{ fontSize: 12, color: C.textSecondary, marginTop: 2 }}>{t.event}</div>
                   {t.comments && <div style={{ fontSize: 11, color: C.textTertiary, marginTop: 2 }}>{t.comments}</div>}
                 </div>

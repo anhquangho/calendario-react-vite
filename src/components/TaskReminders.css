@@ -1,0 +1,73 @@
+.task-reminders {
+  background: #fff;
+  border: 1px solid #ddddd8;
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 20px;
+}
+.task-reminders h2 { font-size: 15px; font-weight: 600; color: #1a1a18; }
+.task-reminders-help, .task-reminders-empty {
+  font-size: 12px;
+  color: #6b6b68;
+  margin-top: 8px;
+}
+.task-reminders-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.task-reminders-tabs button, .task-reminders-expand {
+  background: #fff;
+  color: #454542;
+  border: 1px solid #c8c8c4;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.task-reminders-tabs button[aria-pressed="true"] { background: #f0efee; border-color: #6b6b68; }
+.task-reminders-tabs strong { margin-left: 4px; }
+.task-reminders-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 360px;
+  overflow-y: auto;
+  color-scheme: light;
+  scrollbar-width: thin;
+  scrollbar-color: #c8c8c4 #f7f7f6;
+}
+.task-reminders-list li + li { border-top: 1px solid #e8e8e4; }
+.task-reminders-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #1a1a18;
+  text-align: left;
+  padding: 10px 4px;
+  cursor: pointer;
+}
+.task-reminders-item:hover { background: #f7f7f6; }
+.task-reminders button:focus-visible { outline: 2px solid #378add; outline-offset: -2px; }
+.task-reminders-content { flex: 1 1 180px; min-width: 0; overflow-wrap: anywhere; }
+.task-reminders-title { display: block; font-size: 13px; font-weight: 500; }
+.task-reminders-meta { display: block; font-size: 12px; color: #6b6b68; margin-top: 3px; }
+.task-reminders-expand { margin-top: 10px; }
+.task-reminder-badge {
+  display: inline-block;
+  border-radius: 4px;
+  padding: 2px 5px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+.task-reminder-overdue { color: #a32222; background: #fde8e8; }
+.task-reminder-today { color: #874000; background: #fff0d6; }
+.task-reminder-upcoming { color: #205b99; background: #e8f1fc; }

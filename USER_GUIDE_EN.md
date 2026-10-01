@@ -196,7 +196,7 @@ In **Eventos**, each event’s % bar uses **all** its tasks, independent of filt
 | Sign out on calendar | **No** sign-out button on the main UI. Admins deactivate users in Supabase if needed. |
 | Passwords | Admins set temporary passwords; in-app forgot/change password is **not complete** — contact admin. |
 | Excel | No Excel import/export in the app. Bodas/Corporativo templates live in Supabase. |
-| Visual reminders | **Not implemented** on the calendar yet. |
+| Visual reminders | **Recordatorios** shows unfinished tasks across all months, respecting the selected filters. **Vencidas** = before today; **Hoy** = today; **Próximos 7 días** = tomorrow through 7 days ahead. Click a task to edit it. Completed tasks are excluded. |
 | Backups | Admins handle Supabase backups; users cannot export from the app. |
 
 ---
@@ -204,7 +204,7 @@ In **Eventos**, each event’s % bar uses **all** its tasks, independent of filt
 ## 12. Not implemented — not treated as bugs
 
 - Persistent **Editar event**.
-- Reminders, Excel sync, in-app team management, realtime, sign-out on the calendar.
+- Email/push reminders, Excel sync, in-app team management, realtime, sign-out on the calendar.
 - Perfect handling of duplicate event names in filters.
 
 ---
